@@ -3,7 +3,7 @@
   "displayName": "%extension.name%",
   "description": "💬Conventional Commits for VSCode.",
   "icon": "assets/icon.png",
-  "publisher": "vivaxy",
+  "publisher": "postlude",
   "version": "1.27.0",
   "engines": {
     "vscode": "^1.44.0"
@@ -130,6 +130,16 @@
           "type": "array",
           "default": [],
           "markdownDescription": "%extension.configuration.scopes.markdownDescription%"
+        },
+        "conventionalCommits.jiraTickets": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "%extension.configuration.jiraTickets.markdownDescription%"
+        },
+        "conventionalCommits.promptJiraTickets": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "%extension.configuration.promptJiraTickets.markdownDescription%"
         },
         "conventionalCommits.showEditor": {
           "type": "boolean",
