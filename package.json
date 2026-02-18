@@ -1,7 +1,7 @@
 {
   "name": "git-tools",
   "displayName": "%extension.name%",
-  "description": "Git tools for VSCode - Conventional Commits with Jira support.",
+  "description": "Git tools for VSCode - Conventional Commits, Jira support, and SourceTree-style Stage/Unstage UI.",
   "icon": "assets/icon.png",
   "publisher": "postlude",
   "version": "1.27.0",
@@ -19,7 +19,10 @@
     "gacp",
     "conventional-changelog",
     "commitizen",
-    "cz"
+    "cz",
+    "stage",
+    "unstage",
+    "sourcetree"
   ],
   "repository": {
     "type": "git",

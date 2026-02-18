@@ -31,6 +31,17 @@ with the following additions:
 - **New ticket flow**: Two-step input (ticket number → optional description)
   when adding new tickets
 
+### Stage / Unstage UI (SourceTree-style)
+
+- **Dedicated staging view**: Open with `Cmd+Shift+G` (Mac) or `Ctrl+Shift+G`
+  (Windows/Linux), or via the Git Staging icon in the Activity Bar
+- **File-level operations**: Stage, Unstage, Discard (revert) individual files
+- **Hunk-level staging**: Stage or unstage specific code blocks within a file
+- **Bulk actions**: Stage All and Unstage All buttons
+- **Diff view**: SourceTree-style diff with line numbers, add/remove
+  highlighting
+- **Clickable filename**: Click the filename in the diff view to open the file
+
 ### Other Customizations
 
 - **Extension name**: Renamed to "git-tools"
@@ -58,11 +69,13 @@ This extension helps you to fill in commit message according to
 
 ![Demo](./assets/docs/demo.gif)
 
-You can access git-tools in two ways:
+You can access git-tools in several ways:
 
-1. `Command + Shift + P` or `Ctrl + Shift + P`, enter `git-tools`, and press
-   `Enter`.
-2. Click the icon on the Source Control menu. See the image below.
+1. **Conventional Commits**: `Command + Shift + P` or `Ctrl + Shift + P`, enter
+   `git-tools`, and press `Enter`. Or click the icon on the Source Control menu.
+2. **Stage / Unstage UI**: `Cmd+Shift+G` (Mac) or `Ctrl+Shift+G`
+   (Windows/Linux), or click the Git Staging icon in the Activity Bar, or run
+   "git-tools: Open Stage / Unstage" from the command palette.
 
 ![Icon on the Source Control menu](./assets/docs/icon-on-the-source-control-menu.png)
 
