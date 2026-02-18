@@ -34,7 +34,9 @@
   "activationEvents": [
     "onCommand:extension.conventionalCommits",
     "onCommand:extension.conventionalCommits.resetGlobalState",
-    "onCommand:extension.conventionalCommits.showNewVersionNotes"
+    "onCommand:extension.conventionalCommits.showNewVersionNotes",
+    "onCommand:git-tools.openStagingView",
+    "onView:git-tools.stagingView"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -54,6 +56,19 @@
       {
         "command": "extension.conventionalCommits.showNewVersionNotes",
         "title": "%extension.commands.showNewVersionNotes%"
+      },
+      {
+        "command": "git-tools.openStagingView",
+        "title": "%extension.commands.openStagingView%"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "git-tools.openStagingView",
+        "key": "cmd+shift+g",
+        "mac": "cmd+shift+g",
+        "windows": "ctrl+shift+g",
+        "linux": "ctrl+shift+g"
       }
     ],
     "menus": {
@@ -62,6 +77,29 @@
           "when": "scmProvider == git",
           "command": "extension.conventionalCommits",
           "group": "navigation"
+        },
+        {
+          "when": "scmProvider == git",
+          "command": "git-tools.openStagingView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "git-tools",
+          "title": "%extension.views.gitStaging.title%",
+          "icon": "assets/icon.png"
+        }
+      ]
+    },
+    "views": {
+      "git-tools": [
+        {
+          "type": "webview",
+          "id": "git-tools.stagingView",
+          "name": "%extension.views.stagingView.name%"
         }
       ]
     },

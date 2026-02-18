@@ -11,6 +11,7 @@ import localize, {
 } from './lib/localize';
 import CommitProvider from './lib/editor/provider';
 import { ID } from './configs/keys';
+import { StagingViewProvider } from './staging/staging-view-provider';
 
 export async function activate(context: vscode.ExtensionContext) {
   output.initialize();
@@ -33,6 +34,15 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       'extension.conventionalCommits.showNewVersionNotes',
       () => output.showNewVersionNotes(ID, context, true),
+    ),
+    vscode.commands.registerCommand('git-tools.openStagingView', () => {
+      vscode.commands.executeCommand('workbench.view.extension.git-tools');
+    }),
+  );
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      'git-tools.stagingView',
+      new StagingViewProvider(context.extensionUri),
     ),
   );
   output.showNewVersionNotes(ID, context);
