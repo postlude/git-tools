@@ -1,7 +1,7 @@
 {
-  "name": "conventional-commits-jira",
+  "name": "git-tools",
   "displayName": "%extension.name%",
-  "description": "💬Conventional Commits for VSCode.",
+  "description": "Git tools for VSCode - Conventional Commits with Jira support.",
   "icon": "assets/icon.png",
   "publisher": "postlude",
   "version": "1.27.0",

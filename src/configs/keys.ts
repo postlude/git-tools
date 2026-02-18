@@ -5,4 +5,4 @@
 export const PREFIX = 'conventionalCommits';
 export const SCOPES = 'scopes';
 export const JIRA_TICKETS = 'jiraTickets';
-export const ID = 'postlude.conventional-commits-jira';
+export const ID = 'postlude.git-tools';

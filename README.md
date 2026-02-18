@@ -1,4 +1,4 @@
-# VSCode Conventional Commits
+# git-tools
 
 [![Marketplace Version](https://vsmarketplacebadges.dev/version/vivaxy.vscode-conventional-commits.svg)](https://marketplace.visualstudio.com/items?itemName=vivaxy.vscode-conventional-commits)
 [![Installs](https://vsmarketplacebadges.dev/installs-short/vivaxy.vscode-conventional-commits.svg)](https://marketplace.visualstudio.com/items?itemName=vivaxy.vscode-conventional-commits)
@@ -8,10 +8,11 @@
 
 [Conventional Commits](https://www.conventionalcommits.org/) for VSCode.
 
-## Custom Fork: Conventional Commits with Jira
+## About
 
-This is a customized fork of the original extension with the following
-additions:
+This extension is a customized fork of
+[vscode-conventional-commits](https://github.com/vivaxy/vscode-conventional-commits)
+with the following additions:
 
 ### Jira Ticket Support
 
@@ -32,8 +33,7 @@ additions:
 
 ### Other Customizations
 
-- **Extension name**: Renamed to "Conventional Commits with Jira" to distinguish
-  from the original
+- **Extension name**: Renamed to "git-tools"
 - **Type order**: Commit types (feat, fix, docs, etc.) are displayed in
   conventional order instead of alphabetical order when using commitlint config
 
@@ -58,10 +58,10 @@ This extension helps you to fill in commit message according to
 
 ![Demo](./assets/docs/demo.gif)
 
-You can access VSCode Conventional Commits in two ways:
+You can access git-tools in two ways:
 
-1. `Command + Shift + P` or `Ctrl + Shift + P`, enter `Conventional Commits`,
-   and press `Enter`.
+1. `Command + Shift + P` or `Ctrl + Shift + P`, enter `git-tools`, and press
+   `Enter`.
 2. Click the icon on the Source Control menu. See the image below.
 
 ![Icon on the Source Control menu](./assets/docs/icon-on-the-source-control-menu.png)
@@ -172,7 +172,7 @@ Or `\\n` in JSON format.
 
 ## Troubleshooting
 
-1. Switch to the VSCode `OUTPUT` tab, select `Conventional Commits`.
+1. Switch to the VSCode `OUTPUT` tab, select `git-tools`.
 2. Copy all the output. Before sharing it, make sure you have removed all
    private information.
 
