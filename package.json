@@ -1,5 +1,5 @@
 {
-  "name": "vscode-conventional-commits",
+  "name": "conventional-commits-jira",
   "displayName": "%extension.name%",
   "description": "💬Conventional Commits for VSCode.",
   "icon": "assets/icon.png",

@@ -37,6 +37,7 @@ export default async function prompts({
   emojiFormat,
   lineBreak,
   promptScopes,
+  promptJiraTickets,
   promptBody,
   promptFooter,
   promptCI,
@@ -47,6 +48,7 @@ export default async function prompts({
   emojiFormat: configuration.EMOJI_FORMAT;
   lineBreak: string;
   promptScopes: boolean;
+  promptJiraTickets: boolean;
   promptBody: boolean;
   promptFooter: boolean;
   promptCI: boolean;
@@ -88,7 +90,14 @@ export default async function prompts({
     }
     Object.keys(conventionalCommitsTypes).forEach((t) => allTypes.add(t));
 
-    return Array.from(allTypes).map(function (type) {
+    // Preserve conventional order (feat, fix, docs...) - types not in conventionalCommitsTypes go at end
+    const conventionalOrder = Object.keys(conventionalCommitsTypes);
+    const sortedTypes = [
+      ...conventionalOrder.filter((t) => allTypes.has(t)),
+      ...Array.from(allTypes).filter((t) => !conventionalOrder.includes(t)),
+    ];
+
+    return sortedTypes.map(function (type) {
       // Priority: prompt enum > conventional types > fallback
       const promptMeta = typeEnumFromPrompt?.[type];
       if (promptMeta) {
@@ -192,6 +201,43 @@ export default async function prompts({
     };
   }
 
+  function getJiraTicketPrompt(): Omit<Prompt, 'step' | 'totalSteps'> {
+    const name = 'jiraTicket';
+    const placeholder = getPromptLocalize('jiraTicket.placeholder');
+    const noneItem: Item = {
+      label: getPromptLocalize('jiraTicket.noneItem.label'),
+      description: '',
+      detail: getPromptLocalize('jiraTicket.noneItem.detail'),
+      alwaysShow: true,
+    };
+    return {
+      type: PROMPT_TYPES.CONFIGURABLE_QUICK_PICK_JIRA,
+      name,
+      placeholder,
+      configurationKey: keys.JIRA_TICKETS as keyof configuration.Configuration,
+      newItem: {
+        label: getPromptLocalize('jiraTicket.newItem.label'),
+        description: '',
+        detail: getPromptLocalize('jiraTicket.newItem.detail'),
+        alwaysShow: true,
+      },
+      noneItem,
+      newItemWithoutSetting: {
+        label: getPromptLocalize('jiraTicket.newItemWithoutSetting.label'),
+        description: '',
+        detail: getPromptLocalize('jiraTicket.newItemWithoutSetting.detail'),
+        alwaysShow: true,
+      },
+      newItemTicketPlaceholder: getPromptLocalize(
+        'jiraTicket.newItem.ticketPlaceholder',
+      ),
+      newItemDescriptionPlaceholder: getPromptLocalize(
+        'jiraTicket.newItem.descriptionPlaceholder',
+      ),
+      storeGlobal: configuration.get<boolean>('storeScopesGlobally'),
+    };
+  }
+
   const questions: Prompt[] = [
     {
       type: PROMPT_TYPES.QUICK_PICK,
@@ -203,6 +249,7 @@ export default async function prompts({
       },
     },
     getScopePrompt(),
+    getJiraTicketPrompt(),
     {
       type: PROMPT_TYPES.QUICK_PICK,
       name: 'gitmoji',
@@ -246,7 +293,7 @@ export default async function prompts({
         promptConfig?.questions?.subject?.description ||
         getPromptLocalize('subject.placeholder'),
       validate(input: string) {
-        const { type, scope, gitmoji, ci } = commitMessage;
+        const { type, scope, gitmoji, ci, jiraTicket } = commitMessage;
         const serializedSubject = serializeSubject({
           gitmoji,
           subject: input,
@@ -270,6 +317,7 @@ export default async function prompts({
             gitmoji,
             subject: input,
             ci,
+            jiraTicket,
           }),
         );
         if (headerError) {
@@ -321,6 +369,8 @@ export default async function prompts({
     .filter(function (question) {
       if (question.name === 'scope' && !promptScopes) return false;
 
+      if (question.name === 'jiraTicket' && !promptJiraTickets) return false;
+
       if (question.name === 'gitmoji' && !gitmoji) return false;
 
       if (question.name === 'ci' && !promptCI) return false;
@@ -364,6 +414,19 @@ export default async function prompts({
         questions[index].activeItems = [activeItem];
       }
     } else if (questions[index].type === PROMPT_TYPES.CONFIGURABLE_QUICK_PICK) {
+      if (activeItem) {
+        questions[index].activeItems = [activeItem];
+        if (questions[index].newItemWithoutSetting) {
+          if (activeItem === questions[index].newItemWithoutSetting) {
+            questions[index].value = promptStatuses[index].value;
+          } else {
+            questions[index].value = '';
+          }
+        }
+      }
+    } else if (
+      questions[index].type === PROMPT_TYPES.CONFIGURABLE_QUICK_PICK_JIRA
+    ) {
       if (activeItem) {
         questions[index].activeItems = [activeItem];
         if (questions[index].newItemWithoutSetting) {

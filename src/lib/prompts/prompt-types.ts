@@ -12,6 +12,7 @@ export enum PROMPT_TYPES {
   QUICK_PICK,
   INPUT_BOX,
   CONFIGURABLE_QUICK_PICK,
+  CONFIGURABLE_QUICK_PICK_JIRA,
 }
 
 export type Item = {
@@ -25,7 +26,8 @@ export type Item = {
 export type Prompt = { name: string; type: PROMPT_TYPES } & Options &
   Partial<QuickPickOptions> &
   Partial<InputBoxOptions> &
-  Partial<ConfigurableQuickPickOptions>;
+  Partial<ConfigurableQuickPickOptions> &
+  Partial<ConfigurableQuickPickJiraOptions>;
 
 export type PromptStatus = { value: string; activeItems: Item[] };
 
@@ -151,6 +153,15 @@ export type ConfigurableQuickPickOptions = {
   storeGlobal: boolean;
 } & QuickPickOptions;
 
+export type ConfigurableQuickPickJiraOptions = {
+  configurationKey: keyof configuration.Configuration;
+  newItem: Item;
+  newItemWithoutSetting: Item;
+  newItemTicketPlaceholder: string;
+  newItemDescriptionPlaceholder: string;
+  storeGlobal: boolean;
+} & QuickPickOptions;
+
 async function createConfigurableQuickPick({
   placeholder,
   value,
@@ -258,8 +269,132 @@ async function createConfigurableQuickPick({
   return promptStatus;
 }
 
+async function createConfigurableQuickPickJira({
+  placeholder,
+  value,
+  step,
+  totalSteps,
+  configurationKey,
+  newItem,
+  noneItem,
+  activeItems = [],
+  newItemWithoutSetting,
+  newItemTicketPlaceholder,
+  newItemDescriptionPlaceholder,
+  buttons,
+  storeGlobal = false,
+}: ConfigurableQuickPickJiraOptions): Promise<PromptStatus> {
+  const currentTickets: configuration.JiraTicket[] =
+    configuration.get<configuration.JiraTicket[]>(configurationKey) ?? [];
+  const workspaceConfigurationItemInfo = {
+    description: '',
+    detail: localize('extension.sources.prompt.fromWorkspaceConfiguration'),
+  };
+  const items: Item[] = currentTickets.map(function (ticket) {
+    return {
+      ...workspaceConfigurationItemInfo,
+      label: ticket.id,
+      description: ticket.description ?? '',
+    };
+  });
+  items.push(newItem);
+  items.push(newItemWithoutSetting);
+
+  if (activeItems[0]) {
+    const activeItemInItems = items.find((item) => {
+      const activeItemKeys = Object.keys(activeItems[0]).sort();
+      const itemKeys = Object.keys(item).sort();
+      if (JSON.stringify(activeItemKeys) !== JSON.stringify(itemKeys))
+        return false;
+      for (let i = 0; i < activeItemKeys.length; i++) {
+        if (
+          activeItems[0][activeItemKeys[i] as keyof Item] !==
+          item[activeItemKeys[i] as keyof Item]
+        )
+          return false;
+      }
+      return true;
+    });
+    if (activeItemInItems !== undefined) {
+      activeItems[0] = activeItemInItems;
+    }
+  }
+
+  let promptStatus = await createQuickPick({
+    placeholder,
+    items,
+    activeItems,
+    value,
+    step,
+    totalSteps,
+    noneItem,
+    buttons,
+  });
+
+  if (
+    promptStatus.activeItems[0] &&
+    promptStatus.activeItems[0].label === newItem.label
+  ) {
+    const ticketIdStatus = await createInputBox({
+      placeholder: newItemTicketPlaceholder,
+      value: '',
+      step,
+      totalSteps,
+      buttons,
+    });
+    if (ticketIdStatus.value) {
+      const descriptionStatus = await createInputBox({
+        placeholder: newItemDescriptionPlaceholder,
+        value: '',
+        step,
+        totalSteps,
+        buttons,
+      });
+      const newTicket: configuration.JiraTicket = {
+        id: ticketIdStatus.value.trim(),
+        description: descriptionStatus.value.trim() || undefined,
+      };
+      configuration.update(
+        configurationKey,
+        [...currentTickets, newTicket],
+        storeGlobal,
+      );
+      promptStatus = {
+        value: newTicket.id,
+        activeItems: [
+          {
+            ...workspaceConfigurationItemInfo,
+            label: newTicket.id,
+            description: newTicket.description ?? '',
+          },
+        ],
+      };
+    }
+  }
+
+  if (
+    promptStatus.activeItems[0] &&
+    promptStatus.activeItems[0].label === newItemWithoutSetting.label
+  ) {
+    const ticketIdStatus = await createInputBox({
+      placeholder: newItemTicketPlaceholder,
+      value: '',
+      step,
+      totalSteps,
+      buttons,
+    });
+    promptStatus = {
+      value: ticketIdStatus.value.trim(),
+      activeItems: [newItemWithoutSetting],
+    };
+  }
+
+  return promptStatus;
+}
+
 export default {
   [PROMPT_TYPES.QUICK_PICK]: createQuickPick,
   [PROMPT_TYPES.INPUT_BOX]: createInputBox,
   [PROMPT_TYPES.CONFIGURABLE_QUICK_PICK]: createConfigurableQuickPick,
+  [PROMPT_TYPES.CONFIGURABLE_QUICK_PICK_JIRA]: createConfigurableQuickPickJira,
 };

@@ -1,5 +1,5 @@
 {
-  "extension.name": "约定式提交",
+  "extension.name": "Conventional Commits with Jira",
   "extension.commands.resetGlobalState": "约定式提交: 重置全局状态",
   "extension.commands.showNewVersionNotes": "约定式提交: 显示版本提示",
   "extension.configuration.storeScopesGlobally.markdownDescription": "扩展是否应将定义的作用域存储在您的用户设置中，不勾选则存储在项目设置中。",

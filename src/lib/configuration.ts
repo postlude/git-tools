@@ -10,6 +10,11 @@ export enum EMOJI_FORMAT {
   emoji = 'emoji',
 }
 
+export type JiraTicket = {
+  id: string;
+  description?: string;
+};
+
 export type Configuration = {
   autoCommit: boolean;
   silentAutoCommit: boolean;
@@ -17,8 +22,10 @@ export type Configuration = {
   emojiFormat: EMOJI_FORMAT;
   showEditor: boolean;
   scopes: string[];
+  jiraTickets: JiraTicket[];
   lineBreak: string;
   promptScopes: boolean;
+  promptJiraTickets: boolean;
   promptBody: boolean;
   promptFooter: boolean;
   promptCI: boolean;

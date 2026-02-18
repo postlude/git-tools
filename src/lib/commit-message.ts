@@ -10,6 +10,7 @@ export class CommitMessage {
   private _body: string = '';
   private _footer: string = '';
   private _ci: string = '';
+  private _jiraTicket: string = '';
 
   get type() {
     return this._type;
@@ -66,6 +67,14 @@ export class CommitMessage {
   set ci(input: string) {
     this._ci = input.trim();
   }
+
+  get jiraTicket() {
+    return this._jiraTicket;
+  }
+
+  set jiraTicket(input: string) {
+    this._jiraTicket = input.trim();
+  }
 }
 
 export function serializeSubject(partialCommitMessage: {
@@ -92,10 +101,11 @@ export function serializeHeader(partialCommitMessage: {
   scope: string;
   gitmoji: string;
   subject: string;
+  jiraTicket?: string;
 }) {
   let result = '';
   result += partialCommitMessage.type;
-  const { scope, ci } = partialCommitMessage;
+  const { scope, ci, jiraTicket } = partialCommitMessage;
   if (scope) {
     result += `(${scope})`;
   }
@@ -103,6 +113,9 @@ export function serializeHeader(partialCommitMessage: {
   const subject = serializeSubject(partialCommitMessage);
   if (subject) {
     result += subject;
+  }
+  if (jiraTicket) {
+    result += ` (${jiraTicket})`;
   }
   if (ci === 'Yes') {
     result += ' [skip ci]';

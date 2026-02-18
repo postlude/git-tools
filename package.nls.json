@@ -1,5 +1,5 @@
 {
-  "extension.name": "Conventional Commits",
+  "extension.name": "Conventional Commits with Jira",
   "extension.commands.resetGlobalState": "Conventional Commits: Reset Global State",
   "extension.commands.showNewVersionNotes": "Conventional Commits: Show Version Notes",
   "extension.configuration.autoCommit.markdownDescription": "Control whether the extension should commit files after: forming the message or closing the editor tab.\n\nWhen `#git.enableSmartCommit#` enabled and `#git.smartCommitChanges#` was set to `all`, It allows to commit all changes when there are no staged changes.\n\nAnd set `#git.postCommitCommand#` to `sync` to run `git.sync` after commit.",

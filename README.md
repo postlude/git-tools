@@ -8,6 +8,35 @@
 
 [Conventional Commits](https://www.conventionalcommits.org/) for VSCode.
 
+## Custom Fork: Conventional Commits with Jira
+
+This is a customized fork of the original extension with the following
+additions:
+
+### Jira Ticket Support
+
+- **Jira ticket selection**: Select Jira tickets from a list (similar to scope
+  selection) or add new ones
+- **Settings**: Manage tickets in `settings.json` with
+  `conventionalCommits.jiraTickets`:
+  ```json
+  "conventionalCommits.jiraTickets": [
+    { "id": "JIRA-123", "description": "Login feature" },
+    { "id": "JIRA-456", "description": "User profile" }
+  ]
+  ```
+- **Commit format**: When a ticket is selected, the message format is
+  `feat: add title (JIRA-123)`
+- **New ticket flow**: Two-step input (ticket number → optional description)
+  when adding new tickets
+
+### Other Customizations
+
+- **Extension name**: Renamed to "Conventional Commits with Jira" to distinguish
+  from the original
+- **Type order**: Commit types (feat, fix, docs, etc.) are displayed in
+  conventional order instead of alphabetical order when using commitlint config
+
 ## Features
 
 This extension helps you to fill in commit message according to
@@ -49,7 +78,9 @@ You can access VSCode Conventional Commits in two ways:
 |     `conventionalCommits.promptFooter`     |                                                                                                                                        Control whether the extension should prompt for the `footer` section.                                                                                                                                        |  true   |
 |       `conventionalCommits.promptCI`       |                                                                                                                                          Control whether the extension should prompt for skipping CI run.                                                                                                                                           |  false  |
 |     `conventionalCommits.promptScopes`     |                                                                                                                                        Control whether the extension should prompt for the `scope` section.                                                                                                                                         |  true   |
+|  `conventionalCommits.promptJiraTickets`   |                                                                                                                                           Control whether the extension should prompt for a Jira ticket.                                                                                                                                            |  true   |
 |        `conventionalCommits.scopes`        |                                                                                                                                                Specify available selections in the `scope` section.                                                                                                                                                 |   []    |
+|     `conventionalCommits.jiraTickets`      |                                                                                                            Specify Jira tickets with id and optional description. Format: `[{ "id": "JIRA-123", "description": "Ticket description" }]`                                                                                                             |   []    |
 |      `conventionalCommits.showEditor`      |                                                                                                                         Control whether the extension should show the commit message as a text document in a separate tab.                                                                                                                          |  false  |
 | `conventionalCommits.showNewVersionNotes`  |                                                                                                                                          Control whether the extension should show the new version notes.                                                                                                                                           |  true   |
 |   `conventionalCommits.silentAutoCommit`   |                                                                                                                                  Control that auto commit should be silent, without focusing source control panel.                                                                                                                                  |  false  |
