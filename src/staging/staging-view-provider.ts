@@ -118,6 +118,11 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
   private _selectedUri?: string;
   private _selectedStaged?: boolean;
   private _stateListener?: vscode.Disposable;
+  private _visibilityListener?: vscode.Disposable;
+  private _refreshInFlight = false;
+  private _refreshPending = false;
+  private _refreshPendingSyncStatus = false;
+  private _suppressNextStateChange = false;
 
   constructor(private readonly _extensionUri: vscode.Uri) {}
 
@@ -131,9 +136,15 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       enableScripts: true,
       localResourceRoots: [this._extensionUri],
     };
+    this._visibilityListener?.dispose();
+    this._visibilityListener = webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) {
+        this._refresh(true);
+      }
+    });
     webviewView.webview.html = this._getHtml(webviewView.webview);
     webviewView.webview.onDidReceiveMessage(this._handleMessage.bind(this));
-    this._refresh();
+    this._refresh(true);
   }
 
   private async _handleMessage(message: MessageFromWebview): Promise<void> {
@@ -163,6 +174,15 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
           break;
         }
         case 'discardFile': {
+          const confirmDiscard = 'Discard';
+          const selected = await vscode.window.showWarningMessage(
+            '변경 내용을 되돌리시겠습니까? 이 작업은 취소할 수 없습니다.',
+            { modal: true },
+            confirmDiscard,
+          );
+          if (selected !== confirmDiscard) {
+            break;
+          }
           await discardFile(
             repo,
             vscode.Uri.parse(message.uri),
@@ -244,30 +264,57 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async _refresh(): Promise<void> {
+  private async _refresh(syncStatus = false): Promise<void> {
     if (!this._view) return;
+    if (this._refreshInFlight) {
+      this._refreshPending = true;
+      this._refreshPendingSyncStatus =
+        this._refreshPendingSyncStatus || syncStatus;
+      return;
+    }
+    this._refreshInFlight = true;
+    let nextSyncStatus = syncStatus;
     try {
-      const repo = this._repo ?? (await getRepository());
-      if (repo !== this._repo) {
-        this._stateListener?.dispose();
-        this._repo = repo;
-        this._stateListener = repo.state.onDidChange(() => this._refresh());
-      }
-      const data = await loadViewData(
-        repo,
-        this._selectedUri,
-        this._selectedStaged,
-      );
-      this._view.webview.postMessage({
-        type: 'update',
-        data,
-      } as MessageToWebview);
-    } catch (e) {
-      const err = e instanceof Error ? e : new Error(String(e));
-      this._view.webview.postMessage({
-        type: 'error',
-        message: err.message,
-      } as MessageToWebview);
+      do {
+        this._refreshPending = false;
+        this._refreshPendingSyncStatus = false;
+        try {
+          const repo = this._repo ?? (await getRepository());
+          if (repo !== this._repo) {
+            this._stateListener?.dispose();
+            this._repo = repo;
+            this._stateListener = repo.state.onDidChange(() => {
+              if (this._suppressNextStateChange) {
+                this._suppressNextStateChange = false;
+                return;
+              }
+              this._refresh();
+            });
+          }
+          if (nextSyncStatus) {
+            this._suppressNextStateChange = true;
+            await repo.status();
+          }
+          const data = await loadViewData(
+            repo,
+            this._selectedUri,
+            this._selectedStaged,
+          );
+          this._view?.webview.postMessage({
+            type: 'update',
+            data,
+          } as MessageToWebview);
+        } catch (e) {
+          const err = e instanceof Error ? e : new Error(String(e));
+          this._view?.webview.postMessage({
+            type: 'error',
+            message: err.message,
+          } as MessageToWebview);
+        }
+        nextSyncStatus = this._refreshPendingSyncStatus;
+      } while (this._refreshPending);
+    } finally {
+      this._refreshInFlight = false;
     }
   }
 
@@ -519,9 +566,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
           vscode.postMessage({ type: 'unstageFile', uri: btn.dataset.uri });
         } else if (btn && btn.dataset.action === 'discard') {
           e.stopPropagation();
-          if (confirm('변경 내용을 되돌리시겠습니까? 이 작업은 취소할 수 없습니다.')) {
-            vscode.postMessage({ type: 'discardFile', uri: btn.dataset.uri, status: btn.dataset.status });
-          }
+          vscode.postMessage({ type: 'discardFile', uri: btn.dataset.uri, status: btn.dataset.status });
         } else if (item) {
           vscode.postMessage({ type: 'selectFile', uri: item.dataset.uri, staged: item.dataset.staged === 'true' });
         }
@@ -534,9 +579,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
           vscode.postMessage({ type: 'stageFile', uri: btn.dataset.uri });
         } else if (btn && btn.dataset.action === 'discard') {
           e.stopPropagation();
-          if (confirm('변경 내용을 되돌리시겠습니까? 이 작업은 취소할 수 없습니다.')) {
-            vscode.postMessage({ type: 'discardFile', uri: btn.dataset.uri, status: btn.dataset.status });
-          }
+          vscode.postMessage({ type: 'discardFile', uri: btn.dataset.uri, status: btn.dataset.status });
         } else if (item) {
           vscode.postMessage({ type: 'selectFile', uri: item.dataset.uri, staged: item.dataset.staged === 'true' });
         }
@@ -563,6 +606,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
 
     window._selectedFile = null;
     bindEvents();
+    vscode.postMessage({ type: 'refresh' });
 
     window.addEventListener('message', (e) => {
       const msg = e.data;
