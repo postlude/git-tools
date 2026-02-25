@@ -627,6 +627,33 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
           vscode.postMessage({ type: 'openFile', uri: window._selectedFile.uri });
         }
       });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+        if (!window._selectedFile) return;
+
+        const list = window._selectedFile.staged ? stagedList : unstagedList;
+        const items = Array.from(list.querySelectorAll('.file-item'));
+        if (items.length === 0) return;
+
+        const currentIndex = items.findIndex(
+          (el) => el.dataset.uri === window._selectedFile.uri,
+        );
+        if (currentIndex < 0) return;
+
+        const delta = e.key === 'ArrowDown' ? 1 : -1;
+        const nextIndex = currentIndex + delta;
+        if (nextIndex < 0 || nextIndex >= items.length) return;
+
+        e.preventDefault();
+        const nextEl = items[nextIndex];
+        vscode.postMessage({
+          type: 'selectFile',
+          uri: nextEl.dataset.uri,
+          staged: nextEl.dataset.staged === 'true',
+        });
+        nextEl.scrollIntoView({ block: 'nearest' });
+      });
     }
 
     window._selectedFile = null;
