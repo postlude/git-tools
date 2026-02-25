@@ -199,6 +199,39 @@ export async function unstageHunk(
 }
 
 /**
+ * Discard a hunk (hunk-level) - applies reverse patch to working tree
+ */
+export async function discardHunk(
+  repo: VSCodeGit.Repository,
+  filePath: string,
+  hunk: Hunk,
+  header: string,
+): Promise<void> {
+  const root = repo.rootUri.fsPath;
+
+  const patch = buildPatch(header, [hunk]);
+  const patchPath = path.join(root, '.git-tools-hunk.patch');
+  const fs = require('fs');
+  fs.writeFileSync(patchPath, patch, 'utf8');
+
+  try {
+    const result = spawnSync('git', ['apply', '--reverse', patchPath], {
+      cwd: root,
+    });
+    if (result.status !== 0) {
+      throw new Error(result.stderr?.toString() || 'Failed to discard hunk');
+    }
+  } finally {
+    try {
+      fs.unlinkSync(patchPath);
+    } catch {
+      // ignore
+    }
+  }
+  await repo.status();
+}
+
+/**
  * Get unstaged diff for a file (working tree vs index)
  */
 export async function getUnstagedDiff(

@@ -14,6 +14,7 @@ import {
   discardFile,
   stageHunk,
   unstageHunk,
+  discardHunk,
   getFileDiff,
 } from './git-operations';
 
@@ -25,6 +26,7 @@ type MessageFromWebview =
   | { type: 'discardFile'; uri: string; status: string }
   | { type: 'stageHunk'; uri: string; hunkIndex: number }
   | { type: 'unstageHunk'; uri: string; hunkIndex: number }
+  | { type: 'discardHunk'; uri: string; hunkIndex: number }
   | { type: 'selectFile'; uri: string; staged?: boolean }
   | { type: 'openFile'; uri: string }
   | { type: 'refresh' };
@@ -227,6 +229,25 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
             );
             this._selectedUri = message.uri;
             this._selectedStaged = true;
+            this._refresh();
+          }
+          break;
+        }
+        case 'discardHunk': {
+          const filePath = path.relative(
+            repo.rootUri.fsPath,
+            vscode.Uri.parse(message.uri).fsPath,
+          );
+          const { parsed } = await getFileDiff(repo, filePath, false);
+          if (parsed && parsed.hunks[message.hunkIndex]) {
+            await discardHunk(
+              repo,
+              filePath,
+              parsed.hunks[message.hunkIndex],
+              parsed.header,
+            );
+            this._selectedUri = message.uri;
+            this._selectedStaged = false;
             this._refresh();
           }
           break;
@@ -539,6 +560,9 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       hunksContainer.innerHTML = selected.hunks.map((hunk, i) => {
         const btnLabel = selected.staged ? 'Unstage hunk' : 'Stage hunk';
         const btnAction = selected.staged ? 'unstageHunk' : 'stageHunk';
+        const discardBtn = !selected.staged
+          ? '<button class="btn btn-discard" data-action="discardHunk" data-hunk-index="' + i + '">Discard hunk</button>'
+          : '';
         const parsedLines = parseDiffLines(hunk.content);
         const rows = parsedLines.map(renderDiffLine).join('');
         return '<div class="hunk" data-hunk-index="' + i + '">' +
@@ -546,6 +570,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
           '<span>Hunk ' + (i + 1) + ': Lines ' + hunk.newStart + '-' + (hunk.newStart + hunk.newCount - 1) + '</span>' +
           '<span class="hunk-actions">' +
           '<button class="btn" data-action="' + btnAction + '" data-hunk-index="' + i + '">' + btnLabel + '</button>' +
+          discardBtn +
           '</span></div>' +
           '<div class="hunk-content"><table class="diff-table"><tbody>' + rows + '</tbody></table></div></div>';
       }).join('');
@@ -586,7 +611,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       });
       hunksContainer.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-action]');
-        if (btn && (btn.dataset.action === 'stageHunk' || btn.dataset.action === 'unstageHunk')) {
+        if (btn && (btn.dataset.action === 'stageHunk' || btn.dataset.action === 'unstageHunk' || btn.dataset.action === 'discardHunk')) {
           const uri = window._selectedFile?.uri;
           if (uri) {
             vscode.postMessage({
