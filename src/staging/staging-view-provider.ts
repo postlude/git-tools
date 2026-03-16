@@ -490,11 +490,49 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     const hunksContainer = document.getElementById('hunks-container');
     const emptyState = document.getElementById('empty-state');
     const errorEl = document.getElementById('error');
+    const initialState = vscode.getState() || {};
 
     function escapeHtml(s) {
       const div = document.createElement('div');
       div.textContent = s;
       return div.innerHTML;
+    }
+
+    function getSelectedFileKey(selected) {
+      return selected ? selected.uri + ':' + selected.staged : null;
+    }
+
+    function persistState() {
+      vscode.setState({
+        scrollByFile: window._scrollByFile,
+      });
+    }
+
+    function captureHunkScrollState(selected = window._selectedFile) {
+      const fileKey = getSelectedFileKey(selected);
+      if (!fileKey) return;
+
+      const scrollState = {};
+      hunksContainer.querySelectorAll('.hunk').forEach((hunkEl) => {
+        const hunkIndex = hunkEl.dataset.hunkIndex;
+        const contentEl = hunkEl.querySelector('.hunk-content');
+        if (hunkIndex && contentEl) {
+          scrollState[hunkIndex] = contentEl.scrollTop;
+        }
+      });
+      window._scrollByFile[fileKey] = scrollState;
+      persistState();
+    }
+
+    function restoreHunkScrollState(selected) {
+      const fileKey = getSelectedFileKey(selected);
+      const scrollState = fileKey ? window._scrollByFile[fileKey] || {} : {};
+      hunksContainer.querySelectorAll('.hunk').forEach((hunkEl) => {
+        const hunkIndex = hunkEl.dataset.hunkIndex;
+        const contentEl = hunkEl.querySelector('.hunk-content');
+        if (!contentEl) return;
+        contentEl.scrollTop = Number(scrollState[hunkIndex] || 0);
+      });
     }
 
     function parseDiffLines(content) {
@@ -551,6 +589,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       if (!selected) {
         diffContainer.style.display = 'none';
         emptyState.style.display = 'block';
+        hunksContainer.innerHTML = '';
         return;
       }
       emptyState.style.display = 'none';
@@ -574,6 +613,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
           '</span></div>' +
           '<div class="hunk-content"><table class="diff-table"><tbody>' + rows + '</tbody></table></div></div>';
       }).join('');
+      restoreHunkScrollState(selected);
     }
 
     function bindEvents() {
@@ -657,12 +697,19 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     }
 
     window._selectedFile = null;
+    window._scrollByFile = initialState.scrollByFile || {};
     bindEvents();
     vscode.postMessage({ type: 'refresh' });
+
+    hunksContainer.addEventListener('scroll', (e) => {
+      if (!e.target.classList.contains('hunk-content')) return;
+      captureHunkScrollState();
+    }, true);
 
     window.addEventListener('message', (e) => {
       const msg = e.data;
       if (msg.type === 'update') {
+        captureHunkScrollState();
         errorEl.style.display = 'none';
         renderFileList(msg.data.stagedFiles, true);
         renderFileList(msg.data.unstagedFiles, false);

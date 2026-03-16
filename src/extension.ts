@@ -43,6 +43,11 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.registerWebviewViewProvider(
       'git-tools.stagingView',
       new StagingViewProvider(context.extensionUri),
+      {
+        webviewOptions: {
+          retainContextWhenHidden: true,
+        },
+      },
     ),
   );
   output.showNewVersionNotes(ID, context);
