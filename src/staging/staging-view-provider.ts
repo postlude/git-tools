@@ -441,9 +441,18 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     .hunk-content {
       font-family: var(--vscode-editor-font-family);
       font-size: var(--vscode-editor-font-size);
-      max-height: 240px;
+      min-height: 180px;
       overflow: auto;
       border-collapse: collapse;
+    }
+    .hunk-resize-handle {
+      height: 10px;
+      cursor: ns-resize;
+      background: var(--vscode-editorWidget-border, var(--vscode-widget-border));
+      border-top: 1px solid var(--vscode-widget-border);
+    }
+    .hunk-resize-handle:hover {
+      background: var(--vscode-list-hoverBackground);
     }
     .diff-table { width: 100%; border-collapse: collapse; }
     .diff-table td { padding: 0 8px; vertical-align: top; white-space: pre-wrap; word-break: break-all; }
@@ -491,6 +500,9 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     const emptyState = document.getElementById('empty-state');
     const errorEl = document.getElementById('error');
     const initialState = vscode.getState() || {};
+    const MIN_HUNK_HEIGHT = 180;
+    const DEFAULT_HUNK_HEIGHT = 240;
+    const MAX_HUNK_HEIGHT = 720;
 
     function escapeHtml(s) {
       const div = document.createElement('div');
@@ -505,7 +517,56 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     function persistState() {
       vscode.setState({
         scrollByFile: window._scrollByFile,
+        heightByFile: window._heightByFile,
       });
+    }
+
+    function clampHunkHeight(height) {
+      return Math.max(MIN_HUNK_HEIGHT, Math.min(MAX_HUNK_HEIGHT, Math.round(height)));
+    }
+
+    function getStoredHunkHeights(selected = window._selectedFile) {
+      const fileKey = getSelectedFileKey(selected);
+      return fileKey ? window._heightByFile[fileKey] || {} : {};
+    }
+
+    function getAutoHunkHeight(hunkCount) {
+      const viewportHeight = window.innerHeight || 800;
+      const availableHeight = Math.max(DEFAULT_HUNK_HEIGHT, viewportHeight - 320);
+      if (hunkCount <= 1) {
+        return clampHunkHeight(Math.min(availableHeight, 520));
+      }
+      if (hunkCount === 2) {
+        return clampHunkHeight(Math.min(Math.floor(availableHeight / 2), 420));
+      }
+      if (hunkCount === 3) {
+        return clampHunkHeight(Math.min(Math.floor(availableHeight / 3), 320));
+      }
+      return DEFAULT_HUNK_HEIGHT;
+    }
+
+    function getHunkHeight(selected, hunkIndex) {
+      const storedHeight = getStoredHunkHeights(selected)[hunkIndex];
+      if (storedHeight) {
+        return clampHunkHeight(storedHeight);
+      }
+      const hunkCount = selected?.hunks?.length || 0;
+      return getAutoHunkHeight(hunkCount);
+    }
+
+    function setHunkHeight(hunkIndex, height, selected = window._selectedFile) {
+      const fileKey = getSelectedFileKey(selected);
+      if (!fileKey) return;
+      window._heightByFile[fileKey] = window._heightByFile[fileKey] || {};
+      const nextHeight = clampHunkHeight(height);
+      window._heightByFile[fileKey][hunkIndex] = nextHeight;
+      const contentEl = hunksContainer.querySelector(
+        '.hunk[data-hunk-index="' + hunkIndex + '"] .hunk-content',
+      );
+      if (contentEl) {
+        contentEl.style.height = nextHeight + 'px';
+      }
+      persistState();
     }
 
     function captureHunkScrollState(selected = window._selectedFile) {
@@ -599,6 +660,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       hunksContainer.innerHTML = selected.hunks.map((hunk, i) => {
         const btnLabel = selected.staged ? 'Unstage hunk' : 'Stage hunk';
         const btnAction = selected.staged ? 'unstageHunk' : 'stageHunk';
+        const hunkHeight = getHunkHeight(selected, i);
         const discardBtn = !selected.staged
           ? '<button class="btn btn-discard" data-action="discardHunk" data-hunk-index="' + i + '">Discard hunk</button>'
           : '';
@@ -611,7 +673,8 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
           '<button class="btn" data-action="' + btnAction + '" data-hunk-index="' + i + '">' + btnLabel + '</button>' +
           discardBtn +
           '</span></div>' +
-          '<div class="hunk-content"><table class="diff-table"><tbody>' + rows + '</tbody></table></div></div>';
+          '<div class="hunk-content" style="height:' + hunkHeight + 'px"><table class="diff-table"><tbody>' + rows + '</tbody></table></div>' +
+          '<div class="hunk-resize-handle" data-hunk-index="' + i + '" title="Drag to resize"></div></div>';
       }).join('');
       restoreHunkScrollState(selected);
     }
@@ -662,6 +725,35 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
           }
         }
       });
+      hunksContainer.addEventListener('mousedown', (e) => {
+        const handle = e.target.closest('.hunk-resize-handle');
+        if (!handle || !window._selectedFile) return;
+
+        e.preventDefault();
+        const hunkEl = handle.closest('.hunk');
+        const contentEl = hunkEl && hunkEl.querySelector('.hunk-content');
+        if (!contentEl) return;
+
+        const hunkIndex = parseInt(handle.dataset.hunkIndex, 10);
+        const startY = e.clientY;
+        const startHeight = contentEl.getBoundingClientRect().height;
+        document.body.style.cursor = 'ns-resize';
+        document.body.style.userSelect = 'none';
+
+        const onMouseMove = (moveEvent) => {
+          const delta = moveEvent.clientY - startY;
+          setHunkHeight(hunkIndex, startHeight + delta);
+        };
+        const onMouseUp = () => {
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+          window.removeEventListener('mousemove', onMouseMove);
+          window.removeEventListener('mouseup', onMouseUp);
+        };
+
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+      });
       diffFileName.addEventListener('click', () => {
         if (window._selectedFile) {
           vscode.postMessage({ type: 'openFile', uri: window._selectedFile.uri });
@@ -698,6 +790,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
 
     window._selectedFile = null;
     window._scrollByFile = initialState.scrollByFile || {};
+    window._heightByFile = initialState.heightByFile || {};
     bindEvents();
     vscode.postMessage({ type: 'refresh' });
 
@@ -705,6 +798,12 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       if (!e.target.classList.contains('hunk-content')) return;
       captureHunkScrollState();
     }, true);
+
+    window.addEventListener('resize', () => {
+      if (!window._selectedFile) return;
+      captureHunkScrollState();
+      renderDiff(window._selectedFile);
+    });
 
     window.addEventListener('message', (e) => {
       const msg = e.data;
