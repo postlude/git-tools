@@ -35,6 +35,8 @@ type MessageToWebview =
   | { type: 'update'; data: ViewData }
   | { type: 'error'; message: string };
 
+type LayoutMode = 'sidebar' | 'editor';
+
 interface ViewData {
   stagedFiles: FileEntry[];
   unstagedFiles: FileEntry[];
@@ -129,11 +131,13 @@ async function loadViewData(
 
 export class StagingViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
+  private _panel?: vscode.WebviewPanel;
   private _repo?: VSCodeGit.Repository;
   private _selectedUri?: string;
   private _selectedStaged?: boolean;
   private _stateListener?: vscode.Disposable;
   private _visibilityListener?: vscode.Disposable;
+  private readonly _webviews = new Set<vscode.Webview>();
   private _refreshInFlight = false;
   private _refreshPending = false;
   private _refreshPendingSyncStatus = false;
@@ -141,25 +145,74 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
 
   constructor(private readonly _extensionUri: vscode.Uri) {}
 
+  public showEditorPanel(): void {
+    if (this._panel) {
+      this._panel.reveal(vscode.ViewColumn.Active);
+      void this._refresh(true);
+      return;
+    }
+
+    const panel = vscode.window.createWebviewPanel(
+      'git-tools.stagingEditor',
+      'Stage / Unstage',
+      vscode.ViewColumn.Active,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [this._extensionUri],
+      },
+    );
+    this._panel = panel;
+    this._registerWebview(panel.webview, 'editor');
+    panel.onDidDispose(() => {
+      this._unregisterWebview(panel.webview);
+      if (this._panel === panel) {
+        this._panel = undefined;
+      }
+    });
+    void this._refresh(true);
+  }
+
   resolveWebviewView(
     webviewView: vscode.WebviewView,
     _context: vscode.WebviewViewResolveContext,
     _token: vscode.CancellationToken,
   ): void | Thenable<void> {
+    if (this._view && this._view.webview !== webviewView.webview) {
+      this._unregisterWebview(this._view.webview);
+    }
     this._view = webviewView;
-    webviewView.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [this._extensionUri],
-    };
     this._visibilityListener?.dispose();
     this._visibilityListener = webviewView.onDidChangeVisibility(() => {
       if (webviewView.visible) {
-        this._refresh(true);
+        void this._refresh(true);
       }
     });
-    webviewView.webview.html = this._getHtml(webviewView.webview);
-    webviewView.webview.onDidReceiveMessage(this._handleMessage.bind(this));
-    this._refresh(true);
+    this._registerWebview(webviewView.webview, 'sidebar');
+    void this._refresh(true);
+  }
+
+  private _registerWebview(
+    webview: vscode.Webview,
+    layoutMode: LayoutMode,
+  ): void {
+    webview.options = {
+      enableScripts: true,
+      localResourceRoots: [this._extensionUri],
+    };
+    webview.html = this._getHtml(webview, layoutMode);
+    webview.onDidReceiveMessage(this._handleMessage.bind(this));
+    this._webviews.add(webview);
+  }
+
+  private _unregisterWebview(webview: vscode.Webview): void {
+    this._webviews.delete(webview);
+  }
+
+  private _broadcastMessage(message: MessageToWebview): void {
+    for (const webview of this._webviews) {
+      void webview.postMessage(message);
+    }
   }
 
   private async _handleMessage(message: MessageFromWebview): Promise<void> {
@@ -291,7 +344,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       }
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
-      this._view?.webview.postMessage({
+      this._broadcastMessage({
         type: 'error',
         message: err.message,
       } as MessageToWebview);
@@ -299,7 +352,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async _refresh(syncStatus = false): Promise<void> {
-    if (!this._view) return;
+    if (this._webviews.size === 0) return;
     if (this._refreshInFlight) {
       this._refreshPending = true;
       this._refreshPendingSyncStatus =
@@ -338,13 +391,13 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
             this._selectedUri = undefined;
             this._selectedStaged = undefined;
           }
-          this._view?.webview.postMessage({
+          this._broadcastMessage({
             type: 'update',
             data,
           } as MessageToWebview);
         } catch (e) {
           const err = e instanceof Error ? e : new Error(String(e));
-          this._view?.webview.postMessage({
+          this._broadcastMessage({
             type: 'error',
             message: err.message,
           } as MessageToWebview);
@@ -356,7 +409,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private _getHtml(webview: vscode.Webview): string {
+  private _getHtml(webview: vscode.Webview, layoutMode: LayoutMode): string {
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -367,14 +420,33 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      padding: 8px;
       font-family: var(--vscode-font-family);
       font-size: var(--vscode-font-size);
       color: var(--vscode-foreground);
       background: var(--vscode-editor-background);
+      min-height: 100vh;
+    }
+    .app {
+      min-height: 100vh;
+      padding: 8px;
+    }
+    .layout {
+      display: block;
+    }
+    .file-column, .diff-column {
+      min-height: 0;
+    }
+    .layout-divider {
+      display: none;
     }
     .section {
       margin-bottom: 12px;
+    }
+    .section-panel {
+      border: 1px solid var(--vscode-widget-border);
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--vscode-sideBar-background);
     }
     .section-title {
       font-weight: 600;
@@ -386,8 +458,15 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 6px;
-      padding: 4px 0;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--vscode-widget-border);
+      background: var(--vscode-editor-inactiveSelectionBackground);
+      gap: 8px;
+    }
+    .section-body {
+      min-height: 0;
+      overflow: auto;
+      padding: 6px;
     }
     .file-list {
       list-style: none;
@@ -397,7 +476,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     .file-item {
       display: flex;
       align-items: center;
-      padding: 4px 8px;
+      padding: 6px 8px;
       cursor: pointer;
       border-radius: 4px;
       gap: 8px;
@@ -408,12 +487,19 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       font-size: 10px;
       min-width: 14px;
       color: var(--vscode-descriptionForeground);
+      flex-shrink: 0;
     }
-    .file-item .path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-item .path {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
     .file-actions {
       display: flex;
       gap: 4px;
-      opacity: 0.8;
+      opacity: 0.85;
+      flex-shrink: 0;
     }
     .btn {
       padding: 2px 8px;
@@ -425,21 +511,41 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       color: var(--vscode-button-foreground);
     }
     .btn:hover { opacity: 0.9; }
-    .btn-secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
-    .btn-discard { background: var(--vscode-errorForeground); color: var(--vscode-editor-background); }
-    .diff-container {
-      border-top: 1px solid var(--vscode-widget-border);
+    .btn-secondary {
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+    }
+    .btn-discard {
+      background: var(--vscode-errorForeground);
+      color: var(--vscode-editor-background);
+    }
+    .diff-column {
       margin-top: 12px;
-      padding-top: 12px;
+    }
+    .diff-container {
+      border: 1px solid var(--vscode-widget-border);
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--vscode-editor-background);
+      display: flex;
+      flex-direction: column;
+      min-height: 320px;
     }
     .diff-file-name {
       font-weight: 600;
-      margin-bottom: 8px;
       cursor: pointer;
       color: var(--vscode-textLink-foreground);
       text-decoration: underline;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--vscode-widget-border);
     }
     .diff-file-name:hover { color: var(--vscode-textLink-activeForeground); }
+    #hunks-container {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 12px;
+    }
     .hunk {
       margin-bottom: 12px;
       border: 1px solid var(--vscode-widget-border);
@@ -453,8 +559,13 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 8px;
     }
-    .hunk-actions { display: flex; gap: 6px; }
+    .hunk-actions {
+      display: flex;
+      gap: 6px;
+      flex-shrink: 0;
+    }
     .hunk-content {
       font-family: var(--vscode-editor-font-family);
       font-size: var(--vscode-editor-font-size);
@@ -471,42 +582,150 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     .hunk-resize-handle:hover {
       background: var(--vscode-list-hoverBackground);
     }
-    .diff-table { width: 100%; border-collapse: collapse; }
-    .diff-table td { padding: 0 8px; vertical-align: top; white-space: pre-wrap; word-break: break-all; }
-    .diff-line-num { width: 1%; min-width: 3em; text-align: right; color: var(--vscode-editorLineNumber-foreground); user-select: none; }
+    .diff-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .diff-table td {
+      padding: 0 8px;
+      vertical-align: top;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .diff-line-num {
+      width: 1%;
+      min-width: 3em;
+      text-align: right;
+      color: var(--vscode-editorLineNumber-foreground);
+      user-select: none;
+    }
     .diff-line-num-old { background: rgba(255, 100, 100, 0.2); }
     .diff-line-num-new { background: rgba(100, 255, 100, 0.2); }
     .diff-line-add { background: rgba(0, 200, 0, 0.2); }
     .diff-line-remove { background: rgba(200, 0, 0, 0.2); }
     .diff-line-context { background: transparent; }
-    .diff-gutter { width: 1%; min-width: 1.2em; text-align: center; font-weight: bold; }
+    .diff-gutter {
+      width: 1%;
+      min-width: 1.2em;
+      text-align: center;
+      font-weight: bold;
+    }
     .diff-gutter-add { color: #2ea043; }
     .diff-gutter-remove { color: #cf222e; }
-    .empty-state { color: var(--vscode-descriptionForeground); padding: 16px; text-align: center; }
-    .error { color: var(--vscode-errorForeground); padding: 8px; }
+    .empty-state {
+      color: var(--vscode-descriptionForeground);
+      padding: 16px;
+      text-align: center;
+      border: 1px dashed var(--vscode-widget-border);
+      border-radius: 6px;
+      min-height: 240px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .error {
+      color: var(--vscode-errorForeground);
+      padding: 0 0 8px;
+    }
+    body.editor-layout .app {
+      padding: 12px;
+    }
+    body.editor-layout .layout {
+      display: grid;
+      grid-template-columns: minmax(260px, var(--file-column-width, 320px)) 8px minmax(320px, 1fr);
+      gap: 12px;
+      height: calc(100vh - 24px);
+      align-items: stretch;
+    }
+    body.editor-layout .file-column {
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 12px;
+    }
+    body.editor-layout .section {
+      margin-bottom: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    body.editor-layout .section-panel {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+    body.editor-layout .section-body {
+      flex: 1;
+    }
+    body.editor-layout .diff-column {
+      margin-top: 0;
+      height: 100%;
+    }
+    body.editor-layout .layout-divider {
+      display: block;
+      width: 8px;
+      border-radius: 999px;
+      cursor: col-resize;
+      background: var(--vscode-widget-border);
+      align-self: stretch;
+      margin: 0 -6px;
+      position: relative;
+    }
+    body.editor-layout .layout-divider:hover,
+    body.editor-layout .layout-divider.dragging {
+      background: var(--vscode-focusBorder);
+    }
+    body.editor-layout .layout-divider::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      left: 50%;
+      width: 2px;
+      transform: translateX(-50%);
+      background: color-mix(in srgb, var(--vscode-foreground) 25%, transparent);
+    }
+    body.editor-layout .diff-container {
+      height: 100%;
+      min-height: 100%;
+    }
+    body.editor-layout .empty-state {
+      min-height: 100%;
+    }
   </style>
 </head>
-<body>
-  <div id="error" class="error" style="display:none"></div>
-  <div class="section">
-    <div class="section-header">
-      <span class="section-title">Staged files</span>
-      <button class="btn btn-secondary" id="unstage-all-btn">Unstage All</button>
+<body class="${layoutMode}-layout">
+  <div class="app">
+    <div id="error" class="error" style="display:none"></div>
+    <div class="layout">
+      <div class="file-column">
+        <div class="section section-panel">
+          <div class="section-header">
+            <span class="section-title">Staged files</span>
+            <button class="btn btn-secondary" id="unstage-all-btn">Unstage All</button>
+          </div>
+          <div class="section-body">
+            <ul id="staged-list" class="file-list"></ul>
+          </div>
+        </div>
+        <div class="section section-panel">
+          <div class="section-header">
+            <span class="section-title">Unstaged files</span>
+            <button class="btn" id="stage-all-btn">Stage All</button>
+          </div>
+          <div class="section-body">
+            <ul id="unstaged-list" class="file-list"></ul>
+          </div>
+        </div>
+      </div>
+      <div id="layout-divider" class="layout-divider" title="Drag to resize panes"></div>
+      <div class="diff-column">
+        <div id="diff-container" class="diff-container" style="display:none">
+          <div class="diff-file-name" id="diff-file-name"></div>
+          <div id="hunks-container"></div>
+        </div>
+        <div id="empty-state" class="empty-state">Select a file to view diff</div>
+      </div>
     </div>
-    <ul id="staged-list" class="file-list"></ul>
   </div>
-  <div class="section">
-    <div class="section-header">
-      <span class="section-title">Unstaged files</span>
-      <button class="btn" id="stage-all-btn">Stage All</button>
-    </div>
-    <ul id="unstaged-list" class="file-list"></ul>
-  </div>
-  <div id="diff-container" class="diff-container" style="display:none">
-    <div class="diff-file-name" id="diff-file-name"></div>
-    <div id="hunks-container"></div>
-  </div>
-  <div id="empty-state" class="empty-state">Select a file to view diff</div>
   <script>
     const vscode = acquireVsCodeApi();
     const stagedList = document.getElementById('staged-list');
@@ -516,10 +735,14 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     const hunksContainer = document.getElementById('hunks-container');
     const emptyState = document.getElementById('empty-state');
     const errorEl = document.getElementById('error');
+    const layout = document.querySelector('.layout');
+    const layoutDivider = document.getElementById('layout-divider');
     const initialState = vscode.getState() || {};
     const MIN_HUNK_HEIGHT = 180;
     const DEFAULT_HUNK_HEIGHT = 240;
     const MAX_HUNK_HEIGHT = 720;
+    const MIN_FILE_COLUMN_WIDTH = 260;
+    const DEFAULT_FILE_COLUMN_WIDTH = 320;
 
     function escapeHtml(s) {
       const div = document.createElement('div');
@@ -535,11 +758,36 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       vscode.setState({
         scrollByFile: window._scrollByFile,
         heightByFile: window._heightByFile,
+        fileColumnWidth: window._fileColumnWidth,
       });
     }
 
+    function clampFileColumnWidth(width) {
+      const maxWidth = Math.max(
+        MIN_FILE_COLUMN_WIDTH,
+        Math.floor((window.innerWidth || 1200) * 0.55),
+      );
+      return Math.max(
+        MIN_FILE_COLUMN_WIDTH,
+        Math.min(maxWidth, Math.round(width)),
+      );
+    }
+
+    function applyFileColumnWidth(width, shouldPersist = true) {
+      if (!document.body.classList.contains('editor-layout')) return;
+      const nextWidth = clampFileColumnWidth(width);
+      window._fileColumnWidth = nextWidth;
+      layout.style.setProperty('--file-column-width', nextWidth + 'px');
+      if (shouldPersist) {
+        persistState();
+      }
+    }
+
     function clampHunkHeight(height) {
-      return Math.max(MIN_HUNK_HEIGHT, Math.min(MAX_HUNK_HEIGHT, Math.round(height)));
+      return Math.max(
+        MIN_HUNK_HEIGHT,
+        Math.min(MAX_HUNK_HEIGHT, Math.round(height)),
+      );
     }
 
     function getStoredHunkHeights(selected = window._selectedFile) {
@@ -594,7 +842,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       hunksContainer.querySelectorAll('.hunk').forEach((hunkEl) => {
         const hunkIndex = hunkEl.dataset.hunkIndex;
         const contentEl = hunkEl.querySelector('.hunk-content');
-        if (hunkIndex && contentEl) {
+        if (hunkIndex !== undefined && contentEl) {
           scrollState[hunkIndex] = contentEl.scrollTop;
         }
       });
@@ -616,7 +864,9 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     function parseDiffLines(content) {
       const lines = content.split('\\n');
       if (lines.length === 0) return [];
-      const headerMatch = lines[0].match(/@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@/);
+      const headerMatch = lines[0].match(
+        /@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@/,
+      );
       let oldNum = headerMatch ? parseInt(headerMatch[1], 10) : 0;
       let newNum = headerMatch ? parseInt(headerMatch[3], 10) : 0;
       const result = [];
@@ -625,74 +875,164 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
         const first = raw.charAt(0);
         const text = raw.length > 1 ? raw.substring(1) : '';
         if (first === '-') {
-          result.push({ type: 'remove', oldNum: oldNum++, newNum: '', text: text });
+          result.push({ type: 'remove', oldNum: oldNum++, newNum: '', text });
         } else if (first === '+') {
-          result.push({ type: 'add', oldNum: '', newNum: newNum++, text: text });
+          result.push({ type: 'add', oldNum: '', newNum: newNum++, text });
         } else {
-          result.push({ type: 'context', oldNum: oldNum++, newNum: newNum++, text: first === ' ' ? raw.substring(1) : raw });
+          result.push({
+            type: 'context',
+            oldNum: oldNum++,
+            newNum: newNum++,
+            text: first === ' ' ? raw.substring(1) : raw,
+          });
         }
       }
       return result;
     }
+
     function renderDiffLine(parsed) {
-      const rowCls = parsed.type === 'add' ? 'diff-line-add' : parsed.type === 'remove' ? 'diff-line-remove' : 'diff-line-context';
-      const gutterCls = parsed.type === 'add' ? 'diff-gutter-add' : parsed.type === 'remove' ? 'diff-gutter-remove' : '';
-      const oldNumCls = parsed.type === 'remove' ? 'diff-line-num diff-line-num-old' : 'diff-line-num';
-      const newNumCls = parsed.type === 'add' ? 'diff-line-num diff-line-num-new' : 'diff-line-num';
+      const rowCls =
+        parsed.type === 'add'
+          ? 'diff-line-add'
+          : parsed.type === 'remove'
+            ? 'diff-line-remove'
+            : 'diff-line-context';
+      const gutterCls =
+        parsed.type === 'add'
+          ? 'diff-gutter-add'
+          : parsed.type === 'remove'
+            ? 'diff-gutter-remove'
+            : '';
+      const oldNumCls =
+        parsed.type === 'remove'
+          ? 'diff-line-num diff-line-num-old'
+          : 'diff-line-num';
+      const newNumCls =
+        parsed.type === 'add'
+          ? 'diff-line-num diff-line-num-new'
+          : 'diff-line-num';
       const sign = parsed.type === 'add' ? '+' : parsed.type === 'remove' ? '-' : ' ';
-      return '<tr class="' + rowCls + '">' +
-        '<td class="' + oldNumCls + '">' + (parsed.oldNum !== '' ? parsed.oldNum : '') + '</td>' +
-        '<td class="' + newNumCls + '">' + (parsed.newNum !== '' ? parsed.newNum : '') + '</td>' +
-        '<td class="diff-gutter ' + gutterCls + '">' + escapeHtml(sign) + '</td>' +
-        '<td class="diff-content">' + escapeHtml(parsed.text) + '</td></tr>';
+      return (
+        '<tr class="' +
+        rowCls +
+        '">' +
+        '<td class="' +
+        oldNumCls +
+        '">' +
+        (parsed.oldNum !== '' ? parsed.oldNum : '') +
+        '</td>' +
+        '<td class="' +
+        newNumCls +
+        '">' +
+        (parsed.newNum !== '' ? parsed.newNum : '') +
+        '</td>' +
+        '<td class="diff-gutter ' +
+        gutterCls +
+        '">' +
+        escapeHtml(sign) +
+        '</td>' +
+        '<td class="diff-content">' +
+        escapeHtml(parsed.text) +
+        '</td></tr>'
+      );
     }
 
     function renderFileList(files, staged) {
       const list = staged ? stagedList : unstagedList;
-      list.innerHTML = files.map(f => {
-        const stageBtn = staged
-          ? '<button class="btn btn-secondary" data-action="unstage" data-uri="' + escapeHtml(f.uri) + '">Unstage</button>'
-          : '<button class="btn" data-action="stage" data-uri="' + escapeHtml(f.uri) + '">Stage</button>';
-        const discardBtn = !staged
-          ? '<button class="btn btn-discard" data-action="discard" data-uri="' + escapeHtml(f.uri) + '" data-status="' + escapeHtml(f.status) + '">Discard</button>'
-          : '';
-        return '<li class="file-item" data-uri="' + escapeHtml(f.uri) + '" data-staged="' + staged + '">' +
-          '<span class="status">' + escapeHtml(f.status) + '</span>' +
-          '<span class="path">' + escapeHtml(f.path) + '</span>' +
-          '<span class="file-actions">' + stageBtn + discardBtn + '</span></li>';
-      }).join('');
+      list.innerHTML = files
+        .map((f) => {
+          const stageBtn = staged
+            ? '<button class="btn btn-secondary" data-action="unstage" data-uri="' +
+              escapeHtml(f.uri) +
+              '">Unstage</button>'
+            : '<button class="btn" data-action="stage" data-uri="' +
+              escapeHtml(f.uri) +
+              '">Stage</button>';
+          const discardBtn = !staged
+            ? '<button class="btn btn-discard" data-action="discard" data-uri="' +
+              escapeHtml(f.uri) +
+              '" data-status="' +
+              escapeHtml(f.status) +
+              '">Discard</button>'
+            : '';
+          return (
+            '<li class="file-item" data-uri="' +
+            escapeHtml(f.uri) +
+            '" data-staged="' +
+            staged +
+            '">' +
+            '<span class="status">' +
+            escapeHtml(f.status) +
+            '</span>' +
+            '<span class="path">' +
+            escapeHtml(f.path) +
+            '</span>' +
+            '<span class="file-actions">' +
+            stageBtn +
+            discardBtn +
+            '</span></li>'
+          );
+        })
+        .join('');
     }
 
     function renderDiff(selected) {
       if (!selected) {
         diffContainer.style.display = 'none';
-        emptyState.style.display = 'block';
+        emptyState.style.display = 'flex';
         hunksContainer.innerHTML = '';
         return;
       }
       emptyState.style.display = 'none';
-      diffContainer.style.display = 'block';
-      diffFileName.textContent = selected.path + ' (' + (selected.staged ? 'staged' : 'unstaged') + ')';
+      diffContainer.style.display = 'flex';
+      diffFileName.textContent =
+        selected.path + ' (' + (selected.staged ? 'staged' : 'unstaged') + ')';
       diffFileName.dataset.uri = selected.uri;
-      hunksContainer.innerHTML = selected.hunks.map((hunk, i) => {
-        const btnLabel = selected.staged ? 'Unstage hunk' : 'Stage hunk';
-        const btnAction = selected.staged ? 'unstageHunk' : 'stageHunk';
-        const hunkHeight = getHunkHeight(selected, i);
-        const discardBtn = !selected.staged
-          ? '<button class="btn btn-discard" data-action="discardHunk" data-hunk-index="' + i + '">Discard hunk</button>'
-          : '';
-        const parsedLines = parseDiffLines(hunk.content);
-        const rows = parsedLines.map(renderDiffLine).join('');
-        return '<div class="hunk" data-hunk-index="' + i + '">' +
-          '<div class="hunk-header">' +
-          '<span>Hunk ' + (i + 1) + ': Lines ' + hunk.newStart + '-' + (hunk.newStart + hunk.newCount - 1) + '</span>' +
-          '<span class="hunk-actions">' +
-          '<button class="btn" data-action="' + btnAction + '" data-hunk-index="' + i + '">' + btnLabel + '</button>' +
-          discardBtn +
-          '</span></div>' +
-          '<div class="hunk-content" style="height:' + hunkHeight + 'px"><table class="diff-table"><tbody>' + rows + '</tbody></table></div>' +
-          '<div class="hunk-resize-handle" data-hunk-index="' + i + '" title="Drag to resize"></div></div>';
-      }).join('');
+      hunksContainer.innerHTML = selected.hunks
+        .map((hunk, i) => {
+          const btnLabel = selected.staged ? 'Unstage hunk' : 'Stage hunk';
+          const btnAction = selected.staged ? 'unstageHunk' : 'stageHunk';
+          const hunkHeight = getHunkHeight(selected, i);
+          const discardBtn = !selected.staged
+            ? '<button class="btn btn-discard" data-action="discardHunk" data-hunk-index="' +
+              i +
+              '">Discard hunk</button>'
+            : '';
+          const parsedLines = parseDiffLines(hunk.content);
+          const rows = parsedLines.map(renderDiffLine).join('');
+          return (
+            '<div class="hunk" data-hunk-index="' +
+            i +
+            '">' +
+            '<div class="hunk-header">' +
+            '<span>Hunk ' +
+            (i + 1) +
+            ': Lines ' +
+            hunk.newStart +
+            '-' +
+            (hunk.newStart + hunk.newCount - 1) +
+            '</span>' +
+            '<span class="hunk-actions">' +
+            '<button class="btn" data-action="' +
+            btnAction +
+            '" data-hunk-index="' +
+            i +
+            '">' +
+            btnLabel +
+            '</button>' +
+            discardBtn +
+            '</span></div>' +
+            '<div class="hunk-content" style="height:' +
+            hunkHeight +
+            'px"><table class="diff-table"><tbody>' +
+            rows +
+            '</tbody></table></div>' +
+            '<div class="hunk-resize-handle" data-hunk-index="' +
+            i +
+            '" title="Drag to resize"></div></div>'
+          );
+        })
+        .join('');
       restoreHunkScrollState(selected);
     }
 
@@ -711,9 +1051,17 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
           vscode.postMessage({ type: 'unstageFile', uri: btn.dataset.uri });
         } else if (btn && btn.dataset.action === 'discard') {
           e.stopPropagation();
-          vscode.postMessage({ type: 'discardFile', uri: btn.dataset.uri, status: btn.dataset.status });
+          vscode.postMessage({
+            type: 'discardFile',
+            uri: btn.dataset.uri,
+            status: btn.dataset.status,
+          });
         } else if (item) {
-          vscode.postMessage({ type: 'selectFile', uri: item.dataset.uri, staged: item.dataset.staged === 'true' });
+          vscode.postMessage({
+            type: 'selectFile',
+            uri: item.dataset.uri,
+            staged: item.dataset.staged === 'true',
+          });
         }
       });
       unstagedList.addEventListener('click', (e) => {
@@ -724,14 +1072,27 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
           vscode.postMessage({ type: 'stageFile', uri: btn.dataset.uri });
         } else if (btn && btn.dataset.action === 'discard') {
           e.stopPropagation();
-          vscode.postMessage({ type: 'discardFile', uri: btn.dataset.uri, status: btn.dataset.status });
+          vscode.postMessage({
+            type: 'discardFile',
+            uri: btn.dataset.uri,
+            status: btn.dataset.status,
+          });
         } else if (item) {
-          vscode.postMessage({ type: 'selectFile', uri: item.dataset.uri, staged: item.dataset.staged === 'true' });
+          vscode.postMessage({
+            type: 'selectFile',
+            uri: item.dataset.uri,
+            staged: item.dataset.staged === 'true',
+          });
         }
       });
       hunksContainer.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-action]');
-        if (btn && (btn.dataset.action === 'stageHunk' || btn.dataset.action === 'unstageHunk' || btn.dataset.action === 'discardHunk')) {
+        if (
+          btn &&
+          (btn.dataset.action === 'stageHunk' ||
+            btn.dataset.action === 'unstageHunk' ||
+            btn.dataset.action === 'discardHunk')
+        ) {
           const uri = window._selectedFile?.uri;
           if (uri) {
             vscode.postMessage({
@@ -771,6 +1132,32 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
         window.addEventListener('mousemove', onMouseMove);
         window.addEventListener('mouseup', onMouseUp);
       });
+      if (layoutDivider) {
+        layoutDivider.addEventListener('mousedown', (e) => {
+          if (!document.body.classList.contains('editor-layout')) return;
+
+          e.preventDefault();
+          layoutDivider.classList.add('dragging');
+          document.body.style.cursor = 'col-resize';
+          document.body.style.userSelect = 'none';
+
+          const onMouseMove = (moveEvent) => {
+            const rect = layout.getBoundingClientRect();
+            const nextWidth = moveEvent.clientX - rect.left;
+            applyFileColumnWidth(nextWidth);
+          };
+          const onMouseUp = () => {
+            layoutDivider.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+          };
+
+          window.addEventListener('mousemove', onMouseMove);
+          window.addEventListener('mouseup', onMouseUp);
+        });
+      }
       diffFileName.addEventListener('click', () => {
         if (window._selectedFile) {
           vscode.postMessage({ type: 'openFile', uri: window._selectedFile.uri });
@@ -808,15 +1195,23 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     window._selectedFile = null;
     window._scrollByFile = initialState.scrollByFile || {};
     window._heightByFile = initialState.heightByFile || {};
+    window._fileColumnWidth =
+      initialState.fileColumnWidth || DEFAULT_FILE_COLUMN_WIDTH;
+    applyFileColumnWidth(window._fileColumnWidth, false);
     bindEvents();
     vscode.postMessage({ type: 'refresh' });
 
-    hunksContainer.addEventListener('scroll', (e) => {
-      if (!e.target.classList.contains('hunk-content')) return;
-      captureHunkScrollState();
-    }, true);
+    hunksContainer.addEventListener(
+      'scroll',
+      (e) => {
+        if (!e.target.classList.contains('hunk-content')) return;
+        captureHunkScrollState();
+      },
+      true,
+    );
 
     window.addEventListener('resize', () => {
+      applyFileColumnWidth(window._fileColumnWidth, false);
       if (!window._selectedFile) return;
       captureHunkScrollState();
       renderDiff(window._selectedFile);
@@ -831,11 +1226,16 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
         renderFileList(msg.data.unstagedFiles, false);
         window._selectedFile = msg.data.selectedFile;
         renderDiff(msg.data.selectedFile);
-        [stagedList, unstagedList].forEach(list => {
-          list.querySelectorAll('.file-item').forEach(el => {
+        [stagedList, unstagedList].forEach((list) => {
+          list.querySelectorAll('.file-item').forEach((el) => {
             const uri = el.dataset.uri;
             const staged = el.dataset.staged === 'true';
-            el.classList.toggle('selected', window._selectedFile && window._selectedFile.uri === uri && window._selectedFile.staged === staged);
+            el.classList.toggle(
+              'selected',
+              window._selectedFile &&
+                window._selectedFile.uri === uri &&
+                window._selectedFile.staged === staged,
+            );
           });
         });
       } else if (msg.type === 'error') {

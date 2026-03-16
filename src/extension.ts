@@ -17,6 +17,7 @@ export async function activate(context: vscode.ExtensionContext) {
   output.initialize();
   output.info('Extension Activated');
   localizeInitialize();
+  const stagingViewProvider = new StagingViewProvider(context.extensionUri);
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'extension.conventionalCommits',
@@ -36,13 +37,13 @@ export async function activate(context: vscode.ExtensionContext) {
       () => output.showNewVersionNotes(ID, context, true),
     ),
     vscode.commands.registerCommand('git-tools.openStagingView', () => {
-      vscode.commands.executeCommand('workbench.view.extension.git-tools');
+      stagingViewProvider.showEditorPanel();
     }),
   );
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       'git-tools.stagingView',
-      new StagingViewProvider(context.extensionUri),
+      stagingViewProvider,
       {
         webviewOptions: {
           retainContextWhenHidden: true,
