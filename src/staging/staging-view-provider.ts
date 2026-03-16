@@ -489,6 +489,15 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       color: var(--vscode-descriptionForeground);
       flex-shrink: 0;
     }
+    .file-item .status.status-modified {
+      color: var(--vscode-textLink-foreground);
+    }
+    .file-item .status.status-deleted {
+      color: var(--vscode-errorForeground);
+    }
+    .file-item .status.status-untracked {
+      color: var(--vscode-testing-iconPassed, #2ea043);
+    }
     .file-item .path {
       flex: 1;
       overflow: hidden;
@@ -941,6 +950,14 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       const list = staged ? stagedList : unstagedList;
       list.innerHTML = files
         .map((f) => {
+          const statusClass =
+            f.status === 'M'
+              ? 'status-modified'
+              : f.status === 'D'
+                ? 'status-deleted'
+                : f.status === 'U'
+                  ? 'status-untracked'
+                  : '';
           const stageBtn = staged
             ? '<button class="btn btn-secondary" data-action="unstage" data-uri="' +
               escapeHtml(f.uri) +
@@ -961,7 +978,9 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
             '" data-staged="' +
             staged +
             '">' +
-            '<span class="status">' +
+            '<span class="status ' +
+            statusClass +
+            '">' +
             escapeHtml(f.status) +
             '</span>' +
             '<span class="path">' +
