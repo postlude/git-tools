@@ -100,15 +100,28 @@ async function loadViewData(
 
   let selectedFile: SelectedFile | null = null;
   if (selectedUri && selectedStaged !== undefined) {
-    const filePath = path.relative(root, vscode.Uri.parse(selectedUri).fsPath);
-    const { diff, parsed } = await getFileDiff(repo, filePath, selectedStaged);
-    selectedFile = {
-      uri: selectedUri,
-      path: filePath,
-      staged: selectedStaged,
-      diff,
-      hunks: parsed?.hunks ?? [],
-    };
+    const selectedEntries = selectedStaged ? stagedFiles : unstagedFiles;
+    const selectedEntry = selectedEntries.find(
+      (file) => file.uri === selectedUri,
+    );
+    if (selectedEntry) {
+      const filePath = path.relative(
+        root,
+        vscode.Uri.parse(selectedUri).fsPath,
+      );
+      const { diff, parsed } = await getFileDiff(
+        repo,
+        filePath,
+        selectedStaged,
+      );
+      selectedFile = {
+        uri: selectedUri,
+        path: filePath,
+        staged: selectedStaged,
+        diff,
+        hunks: parsed?.hunks ?? [],
+      };
+    }
   }
 
   return { stagedFiles, unstagedFiles, selectedFile };
@@ -321,6 +334,10 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
             this._selectedUri,
             this._selectedStaged,
           );
+          if (!data.selectedFile) {
+            this._selectedUri = undefined;
+            this._selectedStaged = undefined;
+          }
           this._view?.webview.postMessage({
             type: 'update',
             data,
