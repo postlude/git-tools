@@ -137,6 +137,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
   private _selectedStaged?: boolean;
   private _stateListener?: vscode.Disposable;
   private _visibilityListener?: vscode.Disposable;
+  private _viewDisposeListener?: vscode.Disposable;
   private readonly _webviews = new Set<vscode.Webview>();
   private _refreshInFlight = false;
   private _refreshPending = false;
@@ -147,9 +148,17 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
 
   public showEditorPanel(): void {
     if (this._panel) {
-      this._panel.reveal(vscode.ViewColumn.Active);
-      void this._refresh(true);
-      return;
+      const existingPanel = this._panel;
+      try {
+        existingPanel.reveal(vscode.ViewColumn.Active);
+        void this._refresh(true);
+        return;
+      } catch {
+        this._unregisterWebview(existingPanel.webview);
+        if (this._panel === existingPanel) {
+          this._panel = undefined;
+        }
+      }
     }
 
     const panel = vscode.window.createWebviewPanel(
@@ -182,6 +191,16 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       this._unregisterWebview(this._view.webview);
     }
     this._view = webviewView;
+    this._viewDisposeListener?.dispose();
+    this._viewDisposeListener = webviewView.onDidDispose(() => {
+      this._unregisterWebview(webviewView.webview);
+      if (this._view === webviewView) {
+        this._view = undefined;
+      }
+      this._visibilityListener?.dispose();
+      this._visibilityListener = undefined;
+      this._viewDisposeListener = undefined;
+    });
     this._visibilityListener?.dispose();
     this._visibilityListener = webviewView.onDidChangeVisibility(() => {
       if (webviewView.visible) {
@@ -210,8 +229,13 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
   }
 
   private _broadcastMessage(message: MessageToWebview): void {
-    for (const webview of this._webviews) {
-      void webview.postMessage(message);
+    for (const webview of [...this._webviews]) {
+      void webview.postMessage(message).then(
+        () => undefined,
+        () => {
+          this._unregisterWebview(webview);
+        },
+      );
     }
   }
 
