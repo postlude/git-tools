@@ -171,7 +171,6 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
-        retainContextWhenHidden: true,
         localResourceRoots: [this._extensionUri],
       },
     );
@@ -809,7 +808,41 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     const errorEl = document.getElementById('error');
     const layout = document.querySelector('.layout');
     const layoutDivider = document.getElementById('layout-divider');
-    const initialState = vscode.getState() || {};
+    let isWebviewActive = true;
+
+    function markWebviewInactive() {
+      isWebviewActive = false;
+    }
+
+    function getInitialState() {
+      if (!isWebviewActive) return {};
+      try {
+        return vscode.getState() || {};
+      } catch {
+        markWebviewInactive();
+        return {};
+      }
+    }
+
+    function safePostMessage(message) {
+      if (!isWebviewActive) return;
+      try {
+        vscode.postMessage(message);
+      } catch {
+        markWebviewInactive();
+      }
+    }
+
+    function safeSetState(state) {
+      if (!isWebviewActive) return;
+      try {
+        vscode.setState(state);
+      } catch {
+        markWebviewInactive();
+      }
+    }
+
+    const initialState = getInitialState();
     const MIN_HUNK_HEIGHT = 180;
     const DEFAULT_HUNK_HEIGHT = 240;
     const MAX_HUNK_HEIGHT = 720;
@@ -827,7 +860,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     }
 
     function persistState() {
-      vscode.setState({
+      safeSetState({
         scrollByFile: window._scrollByFile,
         heightByFile: window._heightByFile,
         fileColumnWidth: window._fileColumnWidth,
@@ -1120,26 +1153,26 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
 
     function bindEvents() {
       document.getElementById('stage-all-btn').addEventListener('click', () => {
-        vscode.postMessage({ type: 'stageAll' });
+        safePostMessage({ type: 'stageAll' });
       });
       document.getElementById('unstage-all-btn').addEventListener('click', () => {
-        vscode.postMessage({ type: 'unstageAll' });
+        safePostMessage({ type: 'unstageAll' });
       });
       stagedList.addEventListener('click', (e) => {
         const item = e.target.closest('.file-item');
         const btn = e.target.closest('[data-action]');
         if (btn && btn.dataset.action === 'unstage') {
           e.stopPropagation();
-          vscode.postMessage({ type: 'unstageFile', uri: btn.dataset.uri });
+          safePostMessage({ type: 'unstageFile', uri: btn.dataset.uri });
         } else if (btn && btn.dataset.action === 'discard') {
           e.stopPropagation();
-          vscode.postMessage({
+          safePostMessage({
             type: 'discardFile',
             uri: btn.dataset.uri,
             status: btn.dataset.status,
           });
         } else if (item) {
-          vscode.postMessage({
+          safePostMessage({
             type: 'selectFile',
             uri: item.dataset.uri,
             staged: item.dataset.staged === 'true',
@@ -1151,16 +1184,16 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
         const btn = e.target.closest('[data-action]');
         if (btn && btn.dataset.action === 'stage') {
           e.stopPropagation();
-          vscode.postMessage({ type: 'stageFile', uri: btn.dataset.uri });
+          safePostMessage({ type: 'stageFile', uri: btn.dataset.uri });
         } else if (btn && btn.dataset.action === 'discard') {
           e.stopPropagation();
-          vscode.postMessage({
+          safePostMessage({
             type: 'discardFile',
             uri: btn.dataset.uri,
             status: btn.dataset.status,
           });
         } else if (item) {
-          vscode.postMessage({
+          safePostMessage({
             type: 'selectFile',
             uri: item.dataset.uri,
             staged: item.dataset.staged === 'true',
@@ -1177,7 +1210,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
         ) {
           const uri = window._selectedFile?.uri;
           if (uri) {
-            vscode.postMessage({
+            safePostMessage({
               type: btn.dataset.action,
               uri,
               hunkIndex: parseInt(btn.dataset.hunkIndex, 10),
@@ -1242,7 +1275,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       }
       diffFileName.addEventListener('click', () => {
         if (window._selectedFile) {
-          vscode.postMessage({ type: 'openFile', uri: window._selectedFile.uri });
+          safePostMessage({ type: 'openFile', uri: window._selectedFile.uri });
         }
       });
 
@@ -1265,7 +1298,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
 
         e.preventDefault();
         const nextEl = items[nextIndex];
-        vscode.postMessage({
+        safePostMessage({
           type: 'selectFile',
           uri: nextEl.dataset.uri,
           staged: nextEl.dataset.staged === 'true',
@@ -1281,7 +1314,9 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       initialState.fileColumnWidth || DEFAULT_FILE_COLUMN_WIDTH;
     applyFileColumnWidth(window._fileColumnWidth, false);
     bindEvents();
-    vscode.postMessage({ type: 'refresh' });
+    window.addEventListener('beforeunload', markWebviewInactive);
+    window.addEventListener('pagehide', markWebviewInactive);
+    safePostMessage({ type: 'refresh' });
 
     hunksContainer.addEventListener(
       'scroll',
