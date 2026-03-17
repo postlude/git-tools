@@ -37,6 +37,10 @@ type MessageToWebview =
 
 type LayoutMode = 'sidebar' | 'editor';
 
+interface RegisteredWebview {
+  messageListener: vscode.Disposable;
+}
+
 interface ViewData {
   stagedFiles: FileEntry[];
   unstagedFiles: FileEntry[];
@@ -138,7 +142,7 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
   private _stateListener?: vscode.Disposable;
   private _visibilityListener?: vscode.Disposable;
   private _viewDisposeListener?: vscode.Disposable;
-  private readonly _webviews = new Set<vscode.Webview>();
+  private readonly _webviews = new Map<vscode.Webview, RegisteredWebview>();
   private _refreshInFlight = false;
   private _refreshPending = false;
   private _refreshPendingSyncStatus = false;
@@ -215,28 +219,60 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     webview: vscode.Webview,
     layoutMode: LayoutMode,
   ): void {
-    webview.options = {
-      enableScripts: true,
-      localResourceRoots: [this._extensionUri],
-    };
-    webview.html = this._getHtml(webview, layoutMode);
-    webview.onDidReceiveMessage(this._handleMessage.bind(this));
-    this._webviews.add(webview);
+    this._unregisterWebview(webview);
+    try {
+      webview.options = {
+        enableScripts: true,
+        localResourceRoots: [this._extensionUri],
+      };
+      webview.html = this._getHtml(webview, layoutMode);
+    } catch (error) {
+      if (!this._isDisposedWebviewError(error)) {
+        throw error;
+      }
+      return;
+    }
+
+    const messageListener = webview.onDidReceiveMessage(
+      this._handleMessage.bind(this),
+    );
+    this._webviews.set(webview, { messageListener });
   }
 
   private _unregisterWebview(webview: vscode.Webview): void {
+    const registered = this._webviews.get(webview);
+    registered?.messageListener.dispose();
     this._webviews.delete(webview);
+    if (this._webviews.size === 0) {
+      this._stateListener?.dispose();
+      this._stateListener = undefined;
+      this._refreshPending = false;
+      this._refreshPendingSyncStatus = false;
+    }
   }
 
   private _broadcastMessage(message: MessageToWebview): void {
-    for (const webview of [...this._webviews]) {
-      void webview.postMessage(message).then(
-        () => undefined,
-        () => {
-          this._unregisterWebview(webview);
-        },
-      );
+    for (const webview of [...this._webviews.keys()]) {
+      try {
+        void webview.postMessage(message).then(
+          (delivered) => {
+            if (!delivered) {
+              this._unregisterWebview(webview);
+            }
+          },
+          () => {
+            this._unregisterWebview(webview);
+          },
+        );
+      } catch {
+        this._unregisterWebview(webview);
+      }
     }
+  }
+
+  private _isDisposedWebviewError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /webview/i.test(message) && /disposed/i.test(message);
   }
 
   private async _handleMessage(message: MessageFromWebview): Promise<void> {
@@ -389,6 +425,9 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       do {
         this._refreshPending = false;
         this._refreshPendingSyncStatus = false;
+        if (this._webviews.size === 0) {
+          break;
+        }
         try {
           const repo = this._repo ?? (await getRepository());
           if (repo !== this._repo) {
