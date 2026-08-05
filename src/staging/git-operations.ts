@@ -91,6 +91,31 @@ export async function unstageAllFiles(
 }
 
 /**
+ * Discard all unstaged changes while preserving staged changes
+ */
+export async function discardAllFiles(
+  repo: VSCodeGit.Repository,
+): Promise<void> {
+  const root = repo.rootUri.fsPath;
+  const restore = spawnSync('git', ['restore', '--worktree', '--', '.'], {
+    cwd: root,
+  });
+  if (restore.status !== 0) {
+    throw new Error(
+      restore.stderr?.toString() || 'Failed to discard all unstaged files',
+    );
+  }
+
+  const clean = spawnSync('git', ['clean', '-fd', '--', '.'], { cwd: root });
+  if (clean.status !== 0) {
+    throw new Error(
+      clean.stderr?.toString() || 'Failed to remove untracked files',
+    );
+  }
+  await repo.status();
+}
+
+/**
  * Discard changes for a file (revert to HEAD / remove untracked)
  */
 export async function discardFile(

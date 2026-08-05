@@ -11,6 +11,7 @@ import {
   unstageFile,
   stageAllFiles,
   unstageAllFiles,
+  discardAllFiles,
   discardFile,
   stageHunk,
   unstageHunk,
@@ -23,6 +24,7 @@ type MessageFromWebview =
   | { type: 'unstageFile'; uri: string }
   | { type: 'stageAll' }
   | { type: 'unstageAll' }
+  | { type: 'discardAll' }
   | { type: 'discardFile'; uri: string; status: string }
   | { type: 'stageHunk'; uri: string; hunkIndex: number }
   | { type: 'unstageHunk'; uri: string; hunkIndex: number }
@@ -238,6 +240,22 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
         }
         case 'unstageAll': {
           await unstageAllFiles(repo);
+          this._refresh();
+          break;
+        }
+        case 'discardAll': {
+          const confirmDiscardAll = 'Discard All';
+          const selected = await vscode.window.showWarningMessage(
+            '모든 unstaged 변경 내용을 되돌리시겠습니까? 이 작업은 취소할 수 없습니다.',
+            { modal: true },
+            confirmDiscardAll,
+          );
+          if (selected !== confirmDiscardAll) {
+            break;
+          }
+          await discardAllFiles(repo);
+          this._selectedUri = undefined;
+          this._selectedStaged = undefined;
           this._refresh();
           break;
         }
@@ -462,6 +480,11 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       border-bottom: 1px solid var(--vscode-widget-border);
       background: var(--vscode-editor-inactiveSelectionBackground);
       gap: 8px;
+    }
+    .section-actions {
+      display: flex;
+      gap: 4px;
+      flex-shrink: 0;
     }
     .section-body {
       min-height: 0;
@@ -718,7 +741,10 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
         <div class="section section-panel">
           <div class="section-header">
             <span class="section-title">Unstaged files</span>
-            <button class="btn" id="stage-all-btn">Stage All</button>
+            <span class="section-actions">
+              <button class="btn btn-discard" id="discard-all-btn">Discard All</button>
+              <button class="btn" id="stage-all-btn">Stage All</button>
+            </span>
           </div>
           <div class="section-body">
             <ul id="unstaged-list" class="file-list"></ul>
@@ -1062,6 +1088,11 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       document.getElementById('unstage-all-btn').addEventListener('click', () => {
         vscode.postMessage({ type: 'unstageAll' });
       });
+      document
+        .getElementById('discard-all-btn')
+        .addEventListener('click', () => {
+          vscode.postMessage({ type: 'discardAll' });
+        });
       stagedList.addEventListener('click', (e) => {
         const item = e.target.closest('.file-item');
         const btn = e.target.closest('[data-action]');
