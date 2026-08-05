@@ -31,6 +31,7 @@ type MessageFromWebview =
   | { type: 'discardHunk'; uri: string; hunkIndex: number }
   | { type: 'selectFile'; uri: string; staged?: boolean }
   | { type: 'openFile'; uri: string }
+  | { type: 'openFileAtLine'; uri: string; line: number }
   | { type: 'refresh' };
 
 type MessageToWebview =
@@ -359,6 +360,32 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
           }
           break;
         }
+        case 'openFileAtLine': {
+          const parsed = vscode.Uri.parse(message.uri);
+          const uri =
+            parsed.scheme === 'file' ? vscode.Uri.file(parsed.fsPath) : parsed;
+          try {
+            const document = await vscode.workspace.openTextDocument(uri);
+            const line = Math.max(
+              0,
+              Math.min(message.line - 1, document.lineCount - 1),
+            );
+            const position = new vscode.Position(line, 0);
+            const editor = await vscode.window.showTextDocument(document, {
+              selection: new vscode.Range(position, position),
+            });
+            editor.revealRange(
+              new vscode.Range(position, position),
+              vscode.TextEditorRevealType.InCenterIfOutsideViewport,
+            );
+          } catch (e) {
+            const err = e instanceof Error ? e.message : String(e);
+            vscode.window.showErrorMessage(
+              `파일을 열 수 없습니다: ${path.basename(uri.fsPath)}. ${err}`,
+            );
+          }
+          break;
+        }
       }
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
@@ -592,7 +619,9 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       justify-content: space-between;
       align-items: center;
       gap: 8px;
+      cursor: pointer;
     }
+    .hunk-header:hover { background: var(--vscode-list-hoverBackground); }
     .hunk-actions {
       display: flex;
       gap: 6px;
@@ -910,7 +939,16 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
         const first = raw.charAt(0);
         const text = raw.length > 1 ? raw.substring(1) : '';
         if (first === '-') {
-          result.push({ type: 'remove', oldNum: oldNum++, newNum: '', text });
+          // A removed line has no new-file line number for display, but its
+          // position in the new file is the current newNum. Keep that target
+          // so opening a deletion hunk does not fall back to hunk.newStart.
+          result.push({
+            type: 'remove',
+            oldNum: oldNum++,
+            newNum: '',
+            targetNewNum: newNum,
+            text,
+          });
         } else if (first === '+') {
           result.push({ type: 'add', oldNum: '', newNum: newNum++, text });
         } else {
@@ -923,6 +961,14 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
         }
       }
       return result;
+    }
+
+    function getChangedStartLine(parsedLines, fallback) {
+      for (const line of parsedLines) {
+        if (line.type === 'add') return line.newNum;
+        if (line.type === 'remove') return line.targetNewNum || fallback;
+      }
+      return fallback;
     }
 
     function renderDiffLine(parsed) {
@@ -1044,12 +1090,18 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
               '">Discard hunk</button>'
             : '';
           const parsedLines = parseDiffLines(hunk.content);
+          const changedStartLine = getChangedStartLine(
+            parsedLines,
+            hunk.newStart,
+          );
           const rows = parsedLines.map(renderDiffLine).join('');
           return (
             '<div class="hunk" data-hunk-index="' +
             i +
             '">' +
-            '<div class="hunk-header">' +
+            '<div class="hunk-header" data-action="openFileAtLine" data-line="' +
+            changedStartLine +
+            '">' +
             '<span>Hunk ' +
             (i + 1) +
             ': Lines ' +
@@ -1137,6 +1189,14 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
       });
       hunksContainer.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-action]');
+        if (btn && btn.dataset.action === 'openFileAtLine') {
+          const uri = window._selectedFile?.uri;
+          const line = parseInt(btn.dataset.line, 10);
+          if (uri && Number.isFinite(line)) {
+            vscode.postMessage({ type: 'openFileAtLine', uri, line });
+          }
+          return;
+        }
         if (
           btn &&
           (btn.dataset.action === 'stageHunk' ||
