@@ -150,9 +150,14 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
 
   public showEditorPanel(): void {
     if (this._panel) {
-      this._panel.reveal(vscode.ViewColumn.Active);
-      void this._refresh(true);
-      return;
+      try {
+        this._panel.reveal(vscode.ViewColumn.Active);
+        void this._refresh(true);
+        return;
+      } catch {
+        // Stale panel reference; fall through and create a new one.
+        this._panel = undefined;
+      }
     }
 
     const panel = vscode.window.createWebviewPanel(
@@ -181,17 +186,38 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     _context: vscode.WebviewViewResolveContext,
     _token: vscode.CancellationToken,
   ): void | Thenable<void> {
-    if (this._view && this._view.webview !== webviewView.webview) {
-      this._unregisterWebview(this._view.webview);
-    }
+    // Do not touch the previous view here: reading properties off a disposed
+    // WebviewView throws "Webview is disposed". Stale webviews are dropped by
+    // their own onDidDispose handler and by _broadcastMessage.
     this._view = webviewView;
     this._visibilityListener?.dispose();
-    this._visibilityListener = webviewView.onDidChangeVisibility(() => {
-      if (webviewView.visible) {
-        void this._refresh(true);
+    this._visibilityListener = undefined;
+
+    const webview = webviewView.webview;
+    try {
+      this._visibilityListener = webviewView.onDidChangeVisibility(() => {
+        if (webviewView.visible) {
+          void this._refresh(true);
+        }
+      });
+      webviewView.onDidDispose(() => {
+        this._unregisterWebview(webview);
+        if (this._view === webviewView) {
+          this._view = undefined;
+          this._visibilityListener?.dispose();
+          this._visibilityListener = undefined;
+        }
+      });
+    } catch {
+      // The view was disposed before it finished resolving.
+      this._unregisterWebview(webview);
+      if (this._view === webviewView) {
+        this._view = undefined;
       }
-    });
-    this._registerWebview(webviewView.webview, 'sidebar');
+      return;
+    }
+
+    this._registerWebview(webview, 'sidebar');
     void this._refresh(true);
   }
 
@@ -199,13 +225,18 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
     webview: vscode.Webview,
     layoutMode: LayoutMode,
   ): void {
-    webview.options = {
-      enableScripts: true,
-      localResourceRoots: [this._extensionUri],
-    };
-    webview.html = this._getHtml(webview, layoutMode);
-    webview.onDidReceiveMessage(this._handleMessage.bind(this));
-    this._webviews.add(webview);
+    try {
+      webview.options = {
+        enableScripts: true,
+        localResourceRoots: [this._extensionUri],
+      };
+      webview.html = this._getHtml(webview, layoutMode);
+      webview.onDidReceiveMessage(this._handleMessage.bind(this));
+      this._webviews.add(webview);
+    } catch {
+      // The webview was disposed before we finished initializing it.
+      this._webviews.delete(webview);
+    }
   }
 
   private _unregisterWebview(webview: vscode.Webview): void {
@@ -213,8 +244,16 @@ export class StagingViewProvider implements vscode.WebviewViewProvider {
   }
 
   private _broadcastMessage(message: MessageToWebview): void {
-    for (const webview of this._webviews) {
-      void webview.postMessage(message);
+    for (const webview of [...this._webviews]) {
+      try {
+        // postMessage throws synchronously ("Webview is disposed") when the
+        // underlying webview is already gone; drop it instead of failing.
+        void Promise.resolve(webview.postMessage(message)).then(undefined, () =>
+          this._webviews.delete(webview),
+        );
+      } catch {
+        this._webviews.delete(webview);
+      }
     }
   }
 
